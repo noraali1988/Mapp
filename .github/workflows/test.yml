@@ -1,0 +1,63 @@
+name: Masoud Simple Test
+
+on:
+  workflow_dispatch: # لتشغيل الزر اليدوي
+  push:
+    branches: [ main ] # يشتغل تلقائياً إذا رفعت أي شي
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Theos
+        uses: theos/setup-theos@v2
+
+      - name: Build Test Dylib
+        run: |
+          mkdir -p Project
+          cd Project
+          
+          # إنشاء ملف control (أساسي للـ Theos)
+          cat << 'EOF' > control
+          Package: com.masoud.test
+          Name: MasoudTest
+          Version: 1.0
+          Architecture: iphoneos-arm
+          Maintainer: Masoud
+          Author: Masoud
+          Section: Tweaks
+          EOF
+
+          # إنشاء Makefile بسيط
+          cat << 'EOF' > Makefile
+          ARCHS = arm64
+          TARGET = iphone:clang:latest:12.0
+          include $(THEOS)/makefiles/common.mk
+          TWEAK_NAME = TestDylib
+          TestDylib_FILES = Tweak.xm
+          include $(THEOS_MAKE_PATH)/tweak.mk
+          EOF
+
+          # إنشاء كود Tweak فارغ بس يطبع رسالة بالـ Log
+          cat << 'EOF' > Tweak.xm
+          #import <Foundation/Foundation.h>
+          __attribute__((constructor)) static void init() {
+              NSLog(@"[+] Hello Masoud, The Build is Working!");
+          }
+          EOF
+
+          # عملية البناء
+          make FINALPACKAGE=1
+
+      - name: Upload Dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: Test-Dylib
+          path: Project/.theos/obj/*.dylib
+          

@@ -1,63 +1,112 @@
-name: Masoud Simple Test
+name: Masoud Ultimate Manual Build
 
 on:
-  workflow_dispatch: # لتشغيل الزر اليدوي
-  push:
-    branches: [ main ] # يشتغل تلقائياً إذا رفعت أي شي
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  THEOS: ${{ github.workspace }}/theos
 
 jobs:
   build:
     runs-on: macos-latest
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Theos
-        uses: theos/setup-theos@v2
-
-      - name: Build Test Dylib
+      - name: Manual Setup Theos (No External Actions)
         run: |
-          mkdir -p Project
-          cd Project
+          # تنصيب التوس يدوياً من المصدر الرسمي
+          git clone --recursive https://github.com/theos/theos.git $THEOS
+          # تحميل الـ SDK (اختياري، جيت هوب ماك بي SDKات جاهزة)
+          # نضبط المسارات حتى السيرفر يشوف التوس
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          echo "$THEOS/bin" >> $GITHUB_PATH
+
+      - name: Prepare Bypass Project
+        run: |
+          mkdir -p bypass_project
+          cd bypass_project
           
-          # إنشاء ملف control (أساسي للـ Theos)
+          # تحميل fishhook
+          curl -sO https://raw.githubusercontent.com/facebook/fishhook/main/fishhook.h
+          curl -sO https://raw.githubusercontent.com/facebook/fishhook/main/fishhook.c
+          
+          # إنشاء ملف control
           cat << 'EOF' > control
-          Package: com.masoud.test
-          Name: MasoudTest
-          Version: 1.0
+          Package: com.masoud.ultimate.bypass
+          Name: ShadowBypass
+          Version: 1.0.0
           Architecture: iphoneos-arm
           Maintainer: Masoud
           Author: Masoud
           Section: Tweaks
           EOF
 
-          # إنشاء Makefile بسيط
+          # إنشاء Makefile (لاحظ مسار الثيموس صار متغير)
           cat << 'EOF' > Makefile
           ARCHS = arm64
           TARGET = iphone:clang:latest:12.0
           include $(THEOS)/makefiles/common.mk
-          TWEAK_NAME = TestDylib
-          TestDylib_FILES = Tweak.xm
+          TWEAK_NAME = ShadowBypass
+          ShadowBypass_FILES = Tweak.xm fishhook.c
+          ShadowBypass_CFLAGS = -fobjc-arc
           include $(THEOS_MAKE_PATH)/tweak.mk
           EOF
-
-          # إنشاء كود Tweak فارغ بس يطبع رسالة بالـ Log
+          
+          # إنشاء Plist الفلتر
+          cat << 'EOF' > ShadowBypass.plist
+          { Filter = { Bundles = ( "com.tencent.ig" ); }; }
+          EOF
+          
+          # كود التويك مالتك (بدون تغيير)
           cat << 'EOF' > Tweak.xm
           #import <Foundation/Foundation.h>
-          __attribute__((constructor)) static void init() {
-              NSLog(@"[+] Hello Masoud, The Build is Working!");
+          #import <mach-o/dyld.h>
+          #import <sys/mman.h>
+          #import <string.h>
+          #import <dlfcn.h>
+          #import "fishhook.h"
+
+          void apply_memory_patch(uint64_t ida_offset) {
+              intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+              uintptr_t target_addr = slide + 0x100000000 + ida_offset;
+              size_t page_size = sysconf(_SC_PAGESIZE);
+              uintptr_t page_start = target_addr & ~(page_size - 1);
+              mprotect((void*)page_start, page_size, PROT_READ | PROT_WRITE | PROT_EXEC);
+              unsigned char nop_bytes[] = {0x1F, 0x20, 0x03, 0xD5};
+              memcpy((void*)target_addr, nop_bytes, 4);
+          }
+
+          static void* (*original_dlsym)(void* handle, const char* symbol);
+          
+          void* hooked_dlsym(void* handle, const char* symbol) {
+              return original_dlsym(handle, symbol);
+          }
+
+          __attribute__((constructor)) static void setup_all_bypass() {
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                  apply_memory_patch(0x68F2720); 
+                  apply_memory_patch(0x68F0BC0); 
+                  apply_memory_patch(0x68F2BB8); 
+                  struct rebinding rebindings[] = {
+                      {"dlsym", (void *)hooked_dlsym, (void **)&original_dlsym}
+                  };
+                  rebind_symbols(rebindings, 1);
+                  NSLog(@"[+] Masoud Bypass Active!");
+              });
           }
           EOF
 
-          # عملية البناء
-          make FINALPACKAGE=1
-
-      - name: Upload Dylib
+      - name: Compile Dylib
+        run: |
+          cd bypass_project
+          # تشغيل البناء باستخدام المسار اليدوي
+          make FINALPACKAGE=1 THEOS=$THEOS
+          
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Test-Dylib
-          path: Project/.theos/obj/*.dylib
+          name: Masoud-Dylib
+          path: bypass_project/.theos/obj/*.dylib
           

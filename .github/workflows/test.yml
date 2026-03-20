@@ -1,4 +1,4 @@
-name: Masoud Ultimate Manual Build
+name: Masoud Manual Bypass Build
 
 on:
   workflow_dispatch:
@@ -14,25 +14,30 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Manual Setup Theos (No External Actions)
+      - name: Install Theos Manually
         run: |
-          # تنصيب التوس يدوياً من المصدر الرسمي
+          # 1. تنصيب التوس من المصدر الرسمي
           git clone --recursive https://github.com/theos/theos.git $THEOS
-          # تحميل الـ SDK (اختياري، جيت هوب ماك بي SDKات جاهزة)
-          # نضبط المسارات حتى السيرفر يشوف التوس
+          
+          # 2. تحميل SDK خاص بالآيفون (ضروري جداً لنجاح البناء)
+          mkdir -p $THEOS/sdks
+          curl -LO https://github.com/theos/sdks/raw/master/iPhoneOS14.5.sdk.tar.xz
+          tar -xf iPhoneOS14.5.sdk.tar.xz -C $THEOS/sdks
+          
+          # 3. إعداد المسارات
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
 
-      - name: Prepare Bypass Project
+      - name: Create Project Structure
         run: |
           mkdir -p bypass_project
           cd bypass_project
           
-          # تحميل fishhook
+          # تحميل مكتبة fishhook
           curl -sO https://raw.githubusercontent.com/facebook/fishhook/main/fishhook.h
           curl -sO https://raw.githubusercontent.com/facebook/fishhook/main/fishhook.c
           
-          # إنشاء ملف control
+          # إنشاء ملف الـ Control (بدونه يفشل الـ Makefile)
           cat << 'EOF' > control
           Package: com.masoud.ultimate.bypass
           Name: ShadowBypass
@@ -43,14 +48,18 @@ jobs:
           Section: Tweaks
           EOF
 
-          # إنشاء Makefile (لاحظ مسار الثيموس صار متغير)
+          # إنشاء الـ Makefile (ضبطناه ليدعم الـ SDK المحمل)
           cat << 'EOF' > Makefile
           ARCHS = arm64
-          TARGET = iphone:clang:latest:12.0
+          TARGET = iphone:clang:latest:14.0
+          SYSROOT = $(THEOS)/sdks/iPhoneOS14.5.sdk
+          
           include $(THEOS)/makefiles/common.mk
+
           TWEAK_NAME = ShadowBypass
           ShadowBypass_FILES = Tweak.xm fishhook.c
           ShadowBypass_CFLAGS = -fobjc-arc
+
           include $(THEOS_MAKE_PATH)/tweak.mk
           EOF
           
@@ -59,7 +68,7 @@ jobs:
           { Filter = { Bundles = ( "com.tencent.ig" ); }; }
           EOF
           
-          # كود التويك مالتك (بدون تغيير)
+          # كود الـ Tweak.xm مالتك المعدل بدقة
           cat << 'EOF' > Tweak.xm
           #import <Foundation/Foundation.h>
           #import <mach-o/dyld.h>
@@ -89,24 +98,23 @@ jobs:
                   apply_memory_patch(0x68F2720); 
                   apply_memory_patch(0x68F0BC0); 
                   apply_memory_patch(0x68F2BB8); 
+                  
                   struct rebinding rebindings[] = {
                       {"dlsym", (void *)hooked_dlsym, (void **)&original_dlsym}
                   };
                   rebind_symbols(rebindings, 1);
-                  NSLog(@"[+] Masoud Bypass Active!");
               });
           }
           EOF
 
-      - name: Compile Dylib
+      - name: Compile Final Dylib
         run: |
           cd bypass_project
-          # تشغيل البناء باستخدام المسار اليدوي
-          make FINALPACKAGE=1 THEOS=$THEOS
-          
+          make FINALPACKAGE=1
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Masoud-Dylib
+          name: Masoud-Bypass-Dylib
           path: bypass_project/.theos/obj/*.dylib
           
